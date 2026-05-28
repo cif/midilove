@@ -5,3 +5,6 @@ Package.resolved
 *.xcworkspace/
 DerivedData/
 .DS_Store
+Sounds/*.sf2
+Sounds/*.dls
+Sounds/*.wav
