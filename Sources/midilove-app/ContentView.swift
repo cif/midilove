@@ -11,6 +11,8 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 24) {
                 notesPanel
                 Divider()
+                instrumentPanel
+                Divider()
                 wheelsPanel
             }
             Divider()
@@ -24,6 +26,24 @@ struct ContentView: View {
         }
         .padding(20)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var instrumentPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Instrument").font(.headline)
+            if let current = state.instruments[safe: state.currentInstrumentIndex] {
+                Text(current.name)
+                    .font(.system(.title3, design: .monospaced))
+                    .foregroundStyle(.tint)
+            }
+            if let err = state.instrumentError {
+                Text(err).font(.caption).foregroundStyle(.red)
+            }
+            Text("Press A1–A\(state.instruments.count) to switch")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var statusBar: some View {
@@ -89,9 +109,43 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             row("Knobs (R1–R9)", ids: (1...9).map(ControlID.knob))
             row("Sliders (S1–S9)", ids: (1...9).map(ControlID.slider))
-            row("Buttons A", ids: (1...8).map(ControlID.buttonA), boolean: true)
+            instrumentButtonRow
             row("Buttons B", ids: (1...8).map(ControlID.buttonB), boolean: true)
             row("Buttons C", ids: (1...8).map(ControlID.buttonC), boolean: true)
+        }
+    }
+
+    private var instrumentButtonRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Buttons A — instrument select")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(1...8, id: \.self) { i in
+                    instrumentCell(slot: i)
+                }
+            }
+        }
+    }
+
+    private func instrumentCell(slot: Int) -> some View {
+        let index = slot - 1
+        let isLoaded = state.instruments.indices.contains(index)
+        let isActive = isLoaded && index == state.currentInstrumentIndex
+        let name = isLoaded ? state.instruments[index].name : "—"
+        return VStack(spacing: 2) {
+            Text("A\(slot)").font(.system(.caption2, design: .monospaced))
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isActive ? Color.accentColor : Color.gray.opacity(0.15))
+                Text(name)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(isActive ? Color.white : Color.primary)
+                    .multilineTextAlignment(.center)
+                    .padding(2)
+                    .lineLimit(2)
+            }
+            .frame(width: 80, height: 44)
         }
     }
 
@@ -109,6 +163,8 @@ struct ContentView: View {
     private func cell(id: ControlID, boolean: Bool) -> some View {
         let value = state.controlValues[id] ?? 0
         let active = boolean ? value > 63 : value > 0
+        let label = Self.wiredLabel(for: id)
+        let isWired = label != nil
         return VStack(spacing: 2) {
             Text(id.description).font(.system(.caption2, design: .monospaced))
             ZStack(alignment: .bottom) {
@@ -117,9 +173,26 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(active ? Color.accentColor : Color.gray.opacity(0.3))
                     .frame(height: max(2, CGFloat(value) / 127.0 * 36))
+                if isWired {
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color.accentColor, lineWidth: 1)
+                }
             }
             .frame(width: 36, height: 36)
-            Text("\(value)").font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary)
+            Text(label ?? "\(value)")
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(isWired ? Color.accentColor : Color.secondary)
+        }
+    }
+
+    /// Friendly label for any control we've actually wired to an audio
+    /// parameter. Returning nil means "just show the raw value."
+    private static func wiredLabel(for id: ControlID) -> String? {
+        switch id {
+        case .knob(1):   return "cutoff"
+        case .knob(2):   return "reverb"
+        case .slider(9): return "volume"
+        default:         return nil
         }
     }
 
@@ -127,5 +200,11 @@ struct ContentView: View {
     private static func noteName(_ n: UInt8) -> String {
         let octave = Int(n) / 12 - 1
         return "\(noteNames[Int(n) % 12])\(octave)"
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

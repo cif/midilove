@@ -17,8 +17,11 @@ fetch() {
     echo "✓ Saved $dest ($(du -h "$dest" | cut -f1))"
 }
 
-fetch "Sounds/GrandPiano.sf2" \
+fetch "Sounds/Steinway.sf2" \
     "https://raw.githubusercontent.com/morashon/morashon/master/score/fluidsynth/Steinway%20Grand%20Piano%201.2.SF2"
+
+fetch "Sounds/GM.sf2" \
+    "https://raw.githubusercontent.com/bratpeki/soundfonts/main/SF2/GM/GeneralUser.sf2"
 
 echo ""
 echo "Done. Run \`swift run midilove-app\` to launch the synth."

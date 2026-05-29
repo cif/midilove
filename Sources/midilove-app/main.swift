@@ -15,6 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let root = ContentView().environmentObject(state)
         let hosting = NSHostingController(rootView: root)
+        // Without this, NSHostingController shrinks the window down to the
+        // SwiftUI content's intrinsic size every layout pass, ignoring
+        // whatever we set on the NSWindow.
+        hosting.sizingOptions = []
 
         // Open near-full-screen by default — there's a lot of dense control
         // info to show and the small default felt cramped.
@@ -33,10 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.title = "midilove"
         window.contentViewController = hosting
+        window.setContentSize(size) // explicit, post-hosting, just in case
         window.center()
         // Bumping autosave key invalidates the previously-saved tiny frame
         // so the new default actually takes effect on this launch.
-        window.setFrameAutosaveName("midilove.mainWindow.v2")
+        window.setFrameAutosaveName("midilove.mainWindow.v3")
         window.makeKeyAndOrderFront(nil)
         window.isReleasedWhenClosed = false
 
