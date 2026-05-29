@@ -5,6 +5,7 @@ import Foundation
 public enum ControlID: Hashable, Sendable, CustomStringConvertible {
     case knob(Int)            // R1–R9
     case slider(Int)          // S1–S9
+    case hSlider              // horizontal H1/H2 bar
     case buttonA(Int)         // first row of assignable buttons
     case buttonB(Int)         // second row
     case buttonC(Int)         // third row
@@ -16,6 +17,7 @@ public enum ControlID: Hashable, Sendable, CustomStringConvertible {
         switch self {
         case .knob(let n):        return "R\(n)"
         case .slider(let n):      return "S\(n)"
+        case .hSlider:            return "H1/H2"
         case .buttonA(let n):     return "A\(n)"
         case .buttonB(let n):     return "B\(n)"
         case .buttonC(let n):     return "C\(n)"
@@ -36,6 +38,8 @@ public struct ControlMap {
         switch (channel, cc) {
         case (16, 11): return .modWheel
         case (16, 64): return .sustainPedal
+        // Horizontal H1/H2 slider.
+        case (1, 19):     return .hSlider
         // Eight main knobs share CC 16; ninth knob is CC 18 on ch1.
         case (1...8, 16): return .knob(Int(channel))
         case (1, 18):     return .knob(9)

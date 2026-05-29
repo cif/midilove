@@ -75,9 +75,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Wheels & pedal").font(.headline)
             wheel("Pitch", value: Double(state.pitchBend) / 8192.0, range: -1...1)
-            wheel("Mod (CC11)",
-                  value: Double(state.controlValues[.modWheel] ?? 0) / 127.0,
-                  range: 0...1)
+            modWheelRow
             HStack {
                 Text("Sustain (or hold Space)")
                 Circle()
@@ -86,6 +84,52 @@ struct ContentView: View {
             }.font(.caption.monospaced())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Mod wheel row with an LFO pulse indicator that breathes at the same
+    /// 0.6 Hz rate the audio engine modulates the filter cutoff. The pulse
+    /// is dim and still when mod depth is 0, bright and dramatic at 1.
+    private var modWheelRow: some View {
+        let depth = Double(state.controlValues[.modWheel] ?? 0) / 127.0
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text("Mod → filter LFO").font(.caption.monospaced())
+                lfoPulse(depth: depth)
+            }
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.gray.opacity(0.15))
+                    .frame(height: 6)
+                GeometryReader { geo in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.accentColor)
+                        .frame(width: max(2, geo.size.width * depth), height: 6)
+                }.frame(height: 6)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lfoPulse(depth: Double) -> some View {
+        if depth > 0 {
+            TimelineView(.animation(minimumInterval: 1.0/30.0)) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let phase = sin(t * 0.6 * 2 * .pi) // matches AudioEngine.lfoRateHz
+                let pulse = 0.5 + 0.5 * phase      // 0…1
+                let size = 8 + CGFloat(pulse) * CGFloat(depth) * 12
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: size, height: size)
+                    .opacity(0.5 + 0.5 * depth * pulse)
+                    .shadow(color: .accentColor.opacity(depth * 0.6),
+                            radius: CGFloat(pulse) * 6 * CGFloat(depth))
+            }
+            .frame(width: 22, height: 22)
+        } else {
+            Circle()
+                .fill(Color.gray.opacity(0.25))
+                .frame(width: 8, height: 8)
+        }
     }
 
     private func wheel(_ label: String, value: Double, range: ClosedRange<Double>) -> some View {
@@ -109,9 +153,44 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             row("Knobs (R1–R9)", ids: (1...9).map(ControlID.knob))
             row("Sliders (S1–S9)", ids: (1...9).map(ControlID.slider))
+            hSliderRow
             instrumentButtonRow
             row("Buttons B", ids: (1...8).map(ControlID.buttonB), boolean: true)
             row("Buttons C", ids: (1...8).map(ControlID.buttonC), boolean: true)
+        }
+    }
+
+    /// Horizontal H1/H2 bar — drawn full width with a marker, since unlike
+    /// the vertical sliders it's actually horizontal on the hardware.
+    private var hSliderRow: some View {
+        let value = state.controlValues[.hSlider] ?? 64
+        let norm = Double(value) / 127.0
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("H-Bar (pan)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text(value < 60 ? "← L" : value > 67 ? "R →" : "·")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tint)
+            }
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.15))
+                    .frame(height: 18)
+                // Center tick.
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.35))
+                        .frame(width: 1, height: 18)
+                        .position(x: geo.size.width / 2, y: 9)
+                }.frame(height: 18)
+                // Position marker.
+                GeometryReader { geo in
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 14, height: 14)
+                        .position(x: max(7, min(geo.size.width - 7, geo.size.width * norm)), y: 9)
+                }.frame(height: 18)
+            }
         }
     }
 
@@ -191,7 +270,10 @@ struct ContentView: View {
         switch id {
         case .knob(1):   return "cutoff"
         case .knob(2):   return "reverb"
+        case .knob(3):   return "delay"
+        case .knob(4):   return "feedback"
         case .slider(9): return "volume"
+        case .hSlider:   return "pan"
         default:         return nil
         }
     }

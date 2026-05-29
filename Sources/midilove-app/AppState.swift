@@ -92,8 +92,16 @@ final class AppState: ObservableObject {
             audio.setFilterCutoff(normalized: normalized)
         case .knob(2):
             audio.setReverbMix(normalized: normalized)
+        case .knob(3):
+            audio.setDelayMix(normalized: normalized)
+        case .knob(4):
+            audio.setDelayFeedback(normalized: normalized)
+        case .modWheel:
+            audio.setFilterMod(normalized: normalized)
         case .slider(9):
             audio.setMasterVolume(normalized: normalized)
+        case .hSlider:
+            audio.setPan(normalized: normalized)
         case .buttonA(let n) where value > 63:
             selectInstrument(slot: n - 1)
         default:

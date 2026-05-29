@@ -1,8 +1,8 @@
 import Foundation
 import AVFoundation
 
-/// Wraps `AVAudioEngine` + `AVAudioUnitSampler` + a simple effects chain
-/// (low-pass filter → small reverb → master mixer). Exposes normalized
+/// Wraps `AVAudioEngine` + `AVAudioUnitSampler` + a small effects chain
+/// (low-pass filter → delay → reverb → master mixer). Exposes normalized
 /// 0–1 setters so MIDI controls can map straight in.
 ///
 /// MIDI events from `MIDIEngine` get forwarded into the sampler so it
@@ -13,6 +13,7 @@ public final class AudioEngine: @unchecked Sendable {
     public let engine = AVAudioEngine()
     public let sampler = AVAudioUnitSampler()
     public let filter = AVAudioUnitEQ(numberOfBands: 1)
+    public let delay = AVAudioUnitDelay()
     public let reverb = AVAudioUnitReverb()
     private let voiceChannel: UInt8 = 0
 
@@ -21,29 +22,40 @@ public final class AudioEngine: @unchecked Sendable {
     private var sustainedNotes: Set<UInt8> = []
     private var heldNotes: Set<UInt8> = []
 
+    // Filter LFO state — driven by the mod wheel.
+    private var filterBase: Float = 1.0     // user-set cutoff, 0…1
+    private var filterModDepth: Float = 0.0 // LFO depth, 0…1
+    private var lfoPhase: Float = 0
+    private let lfoRateHz: Float = 0.6      // slow wobble, classic mod-wheel feel
+    private var lfoTimer: Timer?
+
     public init() {
         engine.attach(sampler)
         engine.attach(filter)
+        engine.attach(delay)
         engine.attach(reverb)
 
-        // Low-pass filter starts wide open so the dry sound is untouched
-        // until the user turns R1 down.
         let band = filter.bands[0]
         band.filterType = .lowPass
         band.frequency = 20_000
         band.bypass = false
 
-        // Small reverb preset keeps DSP cost low. Starts fully dry; R2 fades
-        // it in.
+        // Delay defaults: ~3/8 of a second is a nice musical echo; feedback
+        // and wet both start at 0 so the chain is silent on the dry path
+        // until R3/R4 are turned up.
+        delay.delayTime = 0.4
+        delay.feedback = 0
+        delay.wetDryMix = 0
+        delay.lowPassCutoff = 8_000
+
         reverb.loadFactoryPreset(.smallRoom)
         reverb.wetDryMix = 0
 
         engine.connect(sampler, to: filter, format: nil)
-        engine.connect(filter, to: reverb, format: nil)
+        engine.connect(filter, to: delay, format: nil)
+        engine.connect(delay, to: reverb, format: nil)
         engine.connect(reverb, to: engine.mainMixerNode, format: nil)
 
-        // Default master volume — physical slider takes over once user
-        // touches it.
         engine.mainMixerNode.outputVolume = 0.9
     }
 
@@ -60,8 +72,6 @@ public final class AudioEngine: @unchecked Sendable {
         )
     }
 
-    /// Switch to a different patch. Briefly silences anything ringing out
-    /// so we don't get stuck notes after the swap.
     public func load(_ instrument: Instrument) throws {
         panic()
         try sampler.loadSoundBankInstrument(
@@ -74,26 +84,75 @@ public final class AudioEngine: @unchecked Sendable {
 
     // MARK: - Live parameters
 
-    /// 0 = closed (dark/muffled), 1 = wide open (bright). Log-mapped so the
-    /// knob feels musical across its range.
     public func setFilterCutoff(normalized: Float) {
-        let n = max(0, min(1, normalized))
-        // 80 Hz → 20 kHz across the sweep.
-        let freq = 80.0 * powf(250.0, n)
-        filter.bands[0].frequency = freq
+        filterBase = max(0, min(1, normalized))
+        applyFilterFrequency()
     }
 
-    /// 0 = bone dry, 1 = drenched. Capped at 60% wet so it never drowns
-    /// out the dry signal entirely.
+    /// Mod wheel → low-frequency oscillator on the filter. At 0 the filter
+    /// sits exactly where R1 put it; at 1 it sweeps ±~50% of the range
+    /// around that point at ~0.6 Hz.
+    public func setFilterMod(normalized: Float) {
+        filterModDepth = max(0, min(1, normalized))
+        if filterModDepth > 0 {
+            if lfoTimer == nil {
+                let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+                    self?.tickLFO()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                lfoTimer = timer
+            }
+        } else {
+            lfoTimer?.invalidate()
+            lfoTimer = nil
+            applyFilterFrequency()
+        }
+    }
+
     public func setReverbMix(normalized: Float) {
         let n = max(0, min(1, normalized))
         reverb.wetDryMix = n * 60
     }
 
-    /// 0 = silent, 1 = full. Squared to give finer control at the quiet end.
+    public func setDelayMix(normalized: Float) {
+        let n = max(0, min(1, normalized))
+        delay.wetDryMix = n * 50 // cap at 50% so dry signal always reads through
+    }
+
+    /// 0 = single slap-back, 1 = nearly self-oscillating chaos.
+    public func setDelayFeedback(normalized: Float) {
+        let n = max(0, min(1, normalized))
+        delay.feedback = n * 90
+    }
+
     public func setMasterVolume(normalized: Float) {
         let n = max(0, min(1, normalized))
         engine.mainMixerNode.outputVolume = n * n
+    }
+
+    /// 0 = full left, 0.5 = center, 1 = full right.
+    /// Sends standard MIDI CC 10 (pan) so the SoundFont handles positioning
+    /// at the synth level. AVAudioMixing.pan only applies on sources
+    /// connected directly to a mixer; our chain has effects in between, so
+    /// CC 10 is both simpler and more portable.
+    public func setPan(normalized: Float) {
+        let n = max(0, min(1, normalized))
+        let panMidi = UInt8(n * 127)
+        sampler.sendController(10, withValue: panMidi, onChannel: voiceChannel)
+    }
+
+    private func tickLFO() {
+        lfoPhase += 2 * .pi * lfoRateHz / 60.0
+        if lfoPhase > 2 * .pi { lfoPhase -= 2 * .pi }
+        applyFilterFrequency()
+    }
+
+    private func applyFilterFrequency() {
+        // Sin wave centered at 0, magnitude scaled by depth, applied around
+        // user-set cutoff in normalized space then de-normalized to Hz.
+        let lfoOffset = sin(lfoPhase) * 0.3 * filterModDepth
+        let effective = max(0, min(1, filterBase + lfoOffset))
+        filter.bands[0].frequency = 80.0 * powf(250.0, effective)
     }
 
     // MARK: - MIDI handling
